@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_sessions', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_sessions_auth_idx');
             $table->string('session_id', 191)->unique();
             $table->string('ip_address', 64)->nullable();
             $table->text('user_agent')->nullable();

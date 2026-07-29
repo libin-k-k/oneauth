@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_email_verifications', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_email_verify_auth_idx');
             $table->string('email', 191);
             $table->string('token_hash')->nullable();
             $table->timestamp('expires_at')->nullable();

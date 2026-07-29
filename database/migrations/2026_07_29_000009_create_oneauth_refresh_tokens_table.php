@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_refresh_tokens', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_refresh_auth_idx');
             $table->string('token_hash', 191)->unique();
             $table->timestamp('expires_at');
             $table->timestamp('revoked_at')->nullable();

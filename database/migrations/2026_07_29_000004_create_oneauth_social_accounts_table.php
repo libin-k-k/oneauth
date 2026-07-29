@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_social_accounts', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_social_auth_idx');
             $table->string('provider', 30);
             $table->string('provider_id', 191);
             $table->string('email')->nullable();
