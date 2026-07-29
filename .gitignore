@@ -1,0 +1,42 @@
+# Composer
+/vendor/
+composer.lock
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# PHPUnit / testing
+.phpunit.result.cache
+.phpunit.cache/
+coverage/
+clover.xml
+
+# Cursor
+.cursor/
+.cursorignore
+*.canvas.tsx
+
+# Project docs (local / internal)
+/docs/
+oneauth-doc.md
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+/tmp/
+/temp/

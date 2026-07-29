@@ -1,0 +1,141 @@
+{
+    "name": "libinkk/oneauth",
+    "description": "OneAuth is a modular Laravel authentication framework with session, Sanctum, JWT, OTP, social login, email verification, password reset, two-factor authentication, session management, and device security through one unified API.",
+    "type": "library",
+    "keywords": [
+        "laravel",
+        "authentication",
+        "auth",
+        "laravel-authentication",
+        "laravel-auth",
+        "oneauth",
+        "jwt",
+        "jwt-authentication",
+        "laravel-jwt",
+        "sanctum",
+        "laravel-sanctum",
+        "session-authentication",
+        "api-authentication",
+        "otp",
+        "otp-authentication",
+        "sms-otp",
+        "email-otp",
+        "whatsapp-otp",
+        "two-factor-authentication",
+        "2fa",
+        "totp",
+        "multi-factor-authentication",
+        "mfa",
+        "oauth",
+        "oauth2",
+        "social-login",
+        "social-authentication",
+        "google-login",
+        "apple-login",
+        "github-login",
+        "facebook-login",
+        "microsoft-login",
+        "linkedin-login",
+        "email-verification",
+        "phone-verification",
+        "password-reset",
+        "password-policy",
+        "login",
+        "register",
+        "user-authentication",
+        "session-management",
+        "device-management",
+        "trusted-devices",
+        "brute-force-protection",
+        "rate-limiting",
+        "security",
+        "audit-log",
+        "api",
+        "rest-api",
+        "laravel-9",
+        "laravel-10",
+        "laravel-11",
+        "laravel-12",
+        "laravel-13",
+        "php",
+        "php-package",
+        "composer-package"
+    ],
+    "homepage": "https://www.libinkk.in",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Libin K K",
+            "email": "libinkk1999@gmail.com",
+            "homepage": "https://www.libinkk.in",
+            "role": "Developer"
+        }
+    ],
+    "support": {
+        "email": "contact@libinkk.in",
+        "issues": "https://github.com/libinkk/oneauth/issues",
+        "source": "https://github.com/libinkk/oneauth",
+        "docs": "https://www.libinkk.in"
+    },
+    "require": {
+        "php": "^8.0.2",
+        "firebase/php-jwt": "^6.10",
+        "illuminate/auth": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/console": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/contracts": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/database": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/encryption": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/events": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/hashing": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/http": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/mail": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/notifications": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/routing": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/support": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/validation": "^9.0|^10.0|^11.0|^12.0|^13.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^7.0|^8.0|^9.0|^10.0|^11.0",
+        "phpunit/phpunit": "^9.5.10|^10.0|^11.0|^12.0"
+    },
+    "suggest": {
+        "laravel/sanctum": "Required for the Sanctum authentication driver.",
+        "firebase/php-jwt": "Useful for JWT token creation and verification.",
+        "laravel/socialite": "Useful for social OAuth authentication providers."
+    },
+    "autoload": {
+        "psr-4": {
+            "Libinkk\\OneAuth\\": "src/"
+        },
+        "files": [
+            "src/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Libinkk\\OneAuth\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Libinkk\\OneAuth\\OneAuthServiceProvider"
+            ],
+            "aliases": {
+                "OneAuth": "Libinkk\\OneAuth\\Facades\\OneAuth"
+            }
+        },
+        "branch-alias": {
+            "dev-main": "1.x-dev"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "preferred-install": "dist",
+        "allow-plugins": {
+            "php-http/discovery": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
