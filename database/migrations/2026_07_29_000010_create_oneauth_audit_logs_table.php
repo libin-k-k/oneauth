@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_audit_logs', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_audit_auth_idx');
             $table->string('event', 100);
             $table->string('ip_address', 64)->nullable();
             $table->text('user_agent')->nullable();

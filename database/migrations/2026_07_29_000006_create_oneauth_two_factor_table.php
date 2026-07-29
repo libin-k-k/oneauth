@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_two_factor', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_2fa_auth_idx');
             $table->boolean('enabled')->default(false);
             $table->string('method', 30)->default('totp');
             $table->text('secret_encrypted')->nullable();

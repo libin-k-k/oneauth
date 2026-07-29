@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_password_history', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_password_auth_idx');
             $table->string('password_hash');
             $table->timestamp('changed_at');
             $table->timestamps();

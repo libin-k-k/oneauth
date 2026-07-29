@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_devices', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_devices_auth_idx');
             $table->string('device_name')->nullable();
             $table->string('browser')->nullable();
             $table->string('os')->nullable();

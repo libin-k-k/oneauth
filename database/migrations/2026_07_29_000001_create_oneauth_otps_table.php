@@ -13,7 +13,9 @@ return new class extends Migration {
 
         Schema::create('oneauth_otps', function (Blueprint $table): void {
             $table->id();
-            $table->morphs('authenticatable');
+            $table->string('authenticatable_type');
+            $table->unsignedBigInteger('authenticatable_id');
+            $table->index(['authenticatable_type', 'authenticatable_id'], 'oa_otps_auth_idx');
             $table->string('purpose', 50);
             $table->string('channel', 20);
             $table->string('target', 191);
