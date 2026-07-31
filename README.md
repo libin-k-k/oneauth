@@ -30,6 +30,8 @@ OneAuth does not install a frontend, modify your User model, or force one authen
 - [Two-factor authentication](#two-factor-authentication)
 - [Social authentication](#social-authentication)
 - [Sessions and devices](#sessions-and-devices)
+- [Anonymous login](#anonymous-login)
+- [Security controls](#security-controls)
 - [Middleware](#middleware)
 - [Events](#events)
 - [Configuration reference](#configuration-reference)
@@ -453,6 +455,48 @@ The result shape is driver-dependent:
 ]
 ```
 
+### OTP login
+
+Send a login OTP (guest or authenticated):
+
+```php
+OneAuth::sendOtp([
+    'email' => 'taylor@example.com',
+    'purpose' => 'login',
+    'channel' => 'email',
+    'target' => 'taylor@example.com',
+]);
+```
+
+Verify the code and establish the active driver session or tokens:
+
+```php
+$result = OneAuth::loginWithOtp([
+    'email' => 'taylor@example.com',
+    'target' => 'taylor@example.com',
+    'code' => '123456',
+]);
+```
+
+Verify without logging in (sets session flag when a session exists):
+
+```php
+$verified = OneAuth::verifyOtp([
+    'email' => 'taylor@example.com',
+    'purpose' => 'login',
+    'target' => 'taylor@example.com',
+    'code' => '123456',
+]);
+```
+
+### Anonymous login
+
+Requires `ONEAUTH_ANONYMOUS_LOGIN=true`:
+
+```php
+$result = OneAuth::anonymousLogin();
+```
+
 ### Current user
 
 ```php
@@ -473,6 +517,79 @@ $result = OneAuth::refresh();
 
 For JWT, the current request must contain `refresh_token`.
 
+### Email verification
+
+```php
+OneAuth::sendEmailVerification(['email' => 'taylor@example.com']);
+
+$verified = OneAuth::verifyEmail([
+    'email' => 'taylor@example.com',
+    'token' => $tokenFromEmail,
+]);
+```
+
+### Password management
+
+```php
+OneAuth::forgotPassword(['email' => 'taylor@example.com']);
+
+OneAuth::resetPassword([
+    'email' => 'taylor@example.com',
+    'token' => $brokerToken,
+    'password' => 'NewPassword123',
+]);
+
+OneAuth::changePassword([
+    'current_password' => 'Password123',
+    'new_password' => 'NewPassword123',
+]);
+```
+
+### Two-factor authentication
+
+```php
+$setup = OneAuth::enableTwoFactor(['method' => 'totp']); // or email / sms
+OneAuth::verifyTwoFactor(['code' => $code]);
+OneAuth::disableTwoFactor(['password' => $currentPassword]);
+
+try {
+    $result = OneAuth::login($credentials);
+} catch (\Libinkk\OneAuth\Exceptions\TwoFactorRequiredException $e) {
+    $result = OneAuth::completeTwoFactorLogin([
+        'challenge_token' => $e->getChallengeToken(),
+        'code' => $totpOrEmailCode,
+    ]);
+}
+```
+
+### Social login
+
+```php
+$result = OneAuth::socialLogin('google', [
+    'access_token' => $providerAccessToken,
+]);
+```
+
+Supported provider names: `google`, `apple`, `github`, `facebook`, `microsoft`, `linkedin`, `twitter`, `discord`.
+
+### Sessions and devices
+
+```php
+$sessions = OneAuth::sessions();
+OneAuth::revokeSession($sessionId);
+OneAuth::logoutOtherSessions();
+
+$devices = OneAuth::devices();
+OneAuth::trustDevice($fingerprint, true);
+```
+
+### Account lock helpers
+
+```php
+OneAuth::lockAccount('taylor@example.com', 600, 'manual');
+OneAuth::unlockAccount('taylor@example.com');
+```
+
 ### Select a driver at runtime
 
 ```php
@@ -483,8 +600,10 @@ $result = $jwt->login([
 ]);
 ```
 
-Driver methods:
+Driver contract methods:
 
+- `attempt(array $credentials)`
+- `establish(mixed $user)`
 - `login(array $credentials)`
 - `logout()`
 - `refresh()`
@@ -492,6 +611,8 @@ Driver methods:
 - `check()`
 - `guest()`
 - `token()`
+
+Prefer `OneAuth::login()` for application flows. It runs the shared login pipeline (rate limits, locks, access policy, verified email, 2FA, devices, sessions) before the driver establishes credentials.
 
 ## HTTP API tutorial
 
@@ -514,12 +635,16 @@ Content-Type: application/json
 | --- | --- | --- |
 | `POST` | `/oneauth/register` | Register a user |
 | `POST` | `/oneauth/login` | Authenticate credentials |
+| `POST` | `/oneauth/login/otp` | Verify a login OTP and authenticate |
+| `POST` | `/oneauth/login/anonymous` | Create and authenticate a guest user (opt-in) |
 | `POST` | `/oneauth/refresh` | Refresh driver credentials (JWT refresh token) |
-| `POST` | `/oneauth/social/{provider}/login` | Authenticate with Google or Apple token |
+| `POST` | `/oneauth/social/{provider}/login` | Authenticate with a Socialite provider token |
 | `POST` | `/oneauth/2fa/challenge` | Complete login after a 2FA challenge token |
 | `GET` | `/oneauth/email/verify/signed` | Process a temporary signed verification URL |
 | `POST` | `/oneauth/password/forgot` | Send a Laravel password reset link |
 | `POST` | `/oneauth/password/reset` | Reset a password with broker token |
+| `POST` | `/oneauth/otp/send` | Send an OTP (guest or authenticated; resolve user by identifier) |
+| `POST` | `/oneauth/otp/verify` | Verify an OTP without establishing login |
 
 ### Protected endpoints
 
@@ -531,10 +656,8 @@ These routes use `oneauth.auth`:
 | `GET` | `/oneauth/user` | Return current user |
 | `POST` | `/oneauth/email/send-verification` | Send verification token and link |
 | `POST` | `/oneauth/email/verify` | Verify email token |
-| `POST` | `/oneauth/otp/send` | Send an OTP |
-| `POST` | `/oneauth/otp/verify` | Verify an OTP |
-| `POST` | `/oneauth/2fa/enable` | Enable 2FA (returns secret, recovery codes, `otpauth_uri`) |
-| `POST` | `/oneauth/2fa/verify` | Verify TOTP or recovery code for an authenticated session |
+| `POST` | `/oneauth/2fa/enable` | Start 2FA setup (`totp`, `email`, or `sms`) |
+| `POST` | `/oneauth/2fa/verify` | Confirm setup or verify a code for the session |
 | `POST` | `/oneauth/2fa/disable` | Disable 2FA (requires password or 2FA code) |
 | `GET` | `/oneauth/sessions` | List tracked sessions |
 | `DELETE` | `/oneauth/sessions/{sessionId}` | Revoke one tracked session |
@@ -567,6 +690,38 @@ curl -X POST http://localhost/oneauth/login \
     "password": "Password123"
   }'
 ```
+
+### OTP login request
+
+```bash
+curl -X POST http://localhost/oneauth/otp/send \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "taylor@example.com",
+    "purpose": "login",
+    "channel": "email",
+    "target": "taylor@example.com"
+  }'
+
+curl -X POST http://localhost/oneauth/login/otp \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "taylor@example.com",
+    "target": "taylor@example.com",
+    "code": "123456"
+  }'
+```
+
+### Anonymous login request
+
+```bash
+curl -X POST http://localhost/oneauth/login/anonymous \
+  -H "Accept: application/json"
+```
+
+Requires `ONEAUTH_ANONYMOUS_LOGIN=true`.
 
 ### Current user request
 
@@ -873,6 +1028,26 @@ try {
 
 HTTP login returns `403` with `two_factor_required` and `challenge_token`. Finish with `POST /oneauth/2fa/challenge`.
 
+```bash
+curl -X POST http://localhost/oneauth/2fa/enable \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"method":"totp"}'
+
+curl -X POST http://localhost/oneauth/2fa/verify \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"code":"123456"}'
+
+curl -X POST http://localhost/oneauth/2fa/challenge \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "challenge_token": "challenge-from-login",
+    "code": "123456"
+  }'
+```
+
 Skip 2FA on trusted devices when enabled:
 
 ```env
@@ -1035,7 +1210,20 @@ ONEAUTH_BLOCKED_COUNTRIES=
 ONEAUTH_DEFAULT_COUNTRY=
 ```
 
-After too many failed attempts OneAuth creates a row in `oneauth_account_locks`. Use `OneAuth::lockAccount()` / `OneAuth::unlockAccount()` for manual control. New-device logins dispatch `SuspiciousLoginDetected` when detection is enabled.
+After too many failed attempts OneAuth creates a row in `oneauth_account_locks`. Manual helpers:
+
+```php
+OneAuth::lockAccount('taylor@example.com', 600, 'manual');
+OneAuth::unlockAccount('taylor@example.com');
+```
+
+New-device logins dispatch `SuspiciousLoginDetected` when detection is enabled. Password expiration:
+
+```env
+ONEAUTH_PASSWORD_EXPIRES_DAYS=90
+```
+
+Set to `0` to disable.
 
 ## Middleware
 
@@ -1231,6 +1419,8 @@ Implement:
 ```php
 interface AuthenticationDriverInterface
 {
+    public function attempt(array $credentials): mixed;
+    public function establish(mixed $user): array;
     public function login(array $credentials): array;
     public function logout(): void;
     public function refresh(): array;
