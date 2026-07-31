@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Event;
 use Libinkk\OneAuth\Events\OTPVerified;
 use Libinkk\OneAuth\Exceptions\AuthenticationException;
 use Libinkk\OneAuth\Support\OtpService;
+use Libinkk\OneAuth\Support\UserResolver;
 
 class VerifyOtpAction
 {
@@ -17,16 +18,29 @@ class VerifyOtpAction
     public function execute(array $payload): bool
     {
         $user = Auth::user();
+        $identifier = (string) (
+            $payload['identifier']
+            ?? $payload['email']
+            ?? $payload['username']
+            ?? $payload['phone']
+            ?? ''
+        );
+
+        if (!$user && $identifier !== '') {
+            $user = UserResolver::queryByIdentifiers($identifier);
+        }
+
         if (!$user) {
             throw new AuthenticationException('User is not authenticated.');
         }
 
         $purpose = (string) ($payload['purpose'] ?? 'login');
+        $target = (string) ($payload['target'] ?? $user->email ?? $user->phone ?? $identifier);
 
         $ok = $this->otpService->verify(
             $user,
             $purpose,
-            (string) ($payload['target'] ?? $user->email ?? ''),
+            $target,
             (string) ($payload['code'] ?? '')
         );
 

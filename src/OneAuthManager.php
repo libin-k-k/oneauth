@@ -144,4 +144,44 @@ class OneAuthManager
 
         return app(DeviceRepositoryInterface::class)->markTrusted($user, $fingerprint, $trusted);
     }
+
+    public function revokeSession(string $sessionId): bool
+    {
+        $user = $this->driver()->user();
+        if (!$user) {
+            throw new Exceptions\AuthenticationException('User is not authenticated.');
+        }
+
+        return app(SessionRepositoryInterface::class)->revokeBySessionId($user, $sessionId);
+    }
+
+    public function logoutOtherSessions(): int
+    {
+        $user = $this->driver()->user();
+        if (!$user) {
+            throw new Exceptions\AuthenticationException('User is not authenticated.');
+        }
+
+        return app(SessionRepositoryInterface::class)->revokeOthers($user);
+    }
+
+    public function anonymousLogin(array $payload = []): array
+    {
+        return app(Actions\AnonymousLoginAction::class)->execute($payload);
+    }
+
+    public function loginWithOtp(array $payload): array
+    {
+        return app(Actions\LoginWithOtpAction::class)->execute($payload);
+    }
+
+    public function lockAccount(string $identifier, ?int $seconds = null, string $reason = 'manual'): void
+    {
+        app(Support\AccountLockService::class)->lock($identifier, $seconds, $reason, $this->driver()->user());
+    }
+
+    public function unlockAccount(string $identifier): bool
+    {
+        return app(Support\AccountLockService::class)->unlock($identifier);
+    }
 }

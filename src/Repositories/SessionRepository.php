@@ -31,9 +31,7 @@ class SessionRepository implements SessionRepositoryInterface
 
     public function revokeCurrent(mixed $user, ?string $sessionId = null): void
     {
-        $sessionId ??= request()->hasSession()
-            ? (session('oneauth.tracking_session_id') ?? request()->session()->getId())
-            : null;
+        $sessionId ??= $this->currentTrackingId();
 
         $query = Session::query()
             ->where('authenticatable_type', $user::class)
@@ -49,6 +47,30 @@ class SessionRepository implements SessionRepositoryInterface
         if ($latest) {
             $latest->delete();
         }
+    }
+
+    public function revokeBySessionId(mixed $user, string $sessionId): bool
+    {
+        return Session::query()
+            ->where('authenticatable_type', $user::class)
+            ->where('authenticatable_id', $user->getKey())
+            ->where('session_id', $sessionId)
+            ->delete() > 0;
+    }
+
+    public function revokeOthers(mixed $user, ?string $currentSessionId = null): int
+    {
+        $currentSessionId ??= $this->currentTrackingId();
+
+        $query = Session::query()
+            ->where('authenticatable_type', $user::class)
+            ->where('authenticatable_id', $user->getKey());
+
+        if ($currentSessionId) {
+            $query->where('session_id', '!=', $currentSessionId);
+        }
+
+        return $query->delete();
     }
 
     public function revokeAll(mixed $user): void
@@ -75,5 +97,14 @@ class SessionRepository implements SessionRepositoryInterface
             ->whereNotNull('expires_at')
             ->where('expires_at', '<', now())
             ->delete();
+    }
+
+    protected function currentTrackingId(): ?string
+    {
+        if (!request()->hasSession()) {
+            return null;
+        }
+
+        return session('oneauth.tracking_session_id') ?? request()->session()->getId();
     }
 }

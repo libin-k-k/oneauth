@@ -18,6 +18,16 @@ class TwoFactorRequiredException extends OneAuthException
         return $this->challengeToken;
     }
 
+    public function status(): int
+    {
+        return 403;
+    }
+
+    public function errorCode(): string
+    {
+        return 'TWO_FACTOR_REQUIRED';
+    }
+
     public function context(): array
     {
         return array_filter([

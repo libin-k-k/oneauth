@@ -9,8 +9,10 @@ use Libinkk\OneAuth\Models\TwoFactor;
 
 class TwoFactorCodeVerifier
 {
-    public function __construct(private TotpService $totp)
-    {
+    public function __construct(
+        private TotpService $totp,
+        private OtpService $otp
+    ) {
     }
 
     public function verifyOrFail(
@@ -21,8 +23,7 @@ class TwoFactorCodeVerifier
     ): TwoFactor {
         $query = TwoFactor::query()
             ->where('authenticatable_type', $user::class)
-            ->where('authenticatable_id', $user->getKey())
-            ->whereNotNull('secret_encrypted');
+            ->where('authenticatable_id', $user->getKey());
 
         if ($enabledOnly) {
             $query->where('enabled', true);
@@ -61,6 +62,30 @@ class TwoFactorCodeVerifier
 
         if ($code === '') {
             throw new AuthenticationException('Two-factor code is required.');
+        }
+
+        $method = (string) ($twoFactor->method ?? 'totp');
+
+        if (in_array($method, ['email', 'sms'], true)) {
+            $target = $method === 'sms'
+                ? (string) ($user->phone ?? $payload['target'] ?? '')
+                : (string) ($user->email ?? $payload['target'] ?? '');
+
+            if ($target === '') {
+                throw new AuthenticationException('Two-factor OTP target is missing.');
+            }
+
+            try {
+                $this->otp->verify($user, 'two_factor', $target, $code);
+            } catch (\Throwable $throwable) {
+                throw new AuthenticationException('Two-factor code is invalid.');
+            }
+
+            return $twoFactor;
+        }
+
+        if (!$twoFactor->secret_encrypted) {
+            throw new AuthenticationException('Two-factor authentication is not set up.');
         }
 
         $secret = Crypt::decryptString((string) $twoFactor->secret_encrypted);

@@ -23,8 +23,12 @@ class SocialLoginAction
 
     public function execute(string $provider, array $payload): array
     {
-        if (!in_array($provider, ['google', 'apple'], true)) {
+        if (!in_array($provider, (array) config('oneauth.social.providers', ['google', 'apple']), true)) {
             throw new OneAuthException('Unsupported social provider: ' . $provider);
+        }
+
+        if (!$this->appHasOAuthBinding($provider)) {
+            throw new OneAuthException('Social provider is not bound: ' . $provider);
         }
 
         $providerDriver = app('oneauth.oauth.' . $provider);
@@ -99,5 +103,10 @@ class SocialLoginAction
             $this->rateLimiter->hit($identifier, $ip);
             throw $throwable;
         }
+    }
+
+    protected function appHasOAuthBinding(string $provider): bool
+    {
+        return app()->bound('oneauth.oauth.' . $provider);
     }
 }

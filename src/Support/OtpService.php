@@ -3,6 +3,7 @@
 namespace Libinkk\OneAuth\Support;
 
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Libinkk\OneAuth\Contracts\OTPProviderInterface;
 use Libinkk\OneAuth\Exceptions\OTPException;
 use Libinkk\OneAuth\Models\Otp;
@@ -41,9 +42,7 @@ class OtpService
             }
         }
 
-        $length = (int) config('oneauth.otp.length', 6);
-        $max = (10 ** $length) - 1;
-        $code = str_pad((string) random_int(0, $max), $length, '0', STR_PAD_LEFT);
+        $code = $this->generateCode();
         $expiresAt = now()->addSeconds((int) config('oneauth.otp.expires_in_seconds', 300));
 
         if ($recent) {
@@ -68,7 +67,7 @@ class OtpService
                 'resends' => 0,
                 'expires_at' => $expiresAt,
                 'last_sent_at' => now(),
-                'meta' => [],
+                'meta' => ['type' => config('oneauth.otp.type', 'numeric')],
             ]);
         }
 
@@ -105,5 +104,19 @@ class OtpService
         $otp->update(['verified_at' => now()]);
 
         return true;
+    }
+
+    protected function generateCode(): string
+    {
+        $length = max(4, (int) config('oneauth.otp.length', 6));
+        $type = (string) config('oneauth.otp.type', 'numeric');
+
+        if ($type === 'alphanumeric') {
+            return Str::upper(Str::random($length));
+        }
+
+        $max = (10 ** $length) - 1;
+
+        return str_pad((string) random_int(0, $max), $length, '0', STR_PAD_LEFT);
     }
 }

@@ -7,12 +7,12 @@
 
 OneAuth is a modular, API-first authentication package for Laravel 9, 10, 11, 12, and 13.
 
-It provides one public API for session authentication, Laravel Sanctum, JWT access and refresh tokens, email OTP, email verification, password management, two-factor authentication, Google and Apple social login, session tracking, and device tracking.
+It provides one public API for session authentication, Laravel Sanctum, JWT access and refresh tokens, email OTP and OTP login, anonymous login, email verification, password management with history and expiration, two-factor authentication (TOTP, email OTP, SMS OTP with a custom provider), social login via Socialite, session tracking, device tracking with trusted-device policies, account locks, IP and country access rules, suspicious-login events, and audit logs.
 
 OneAuth does not install a frontend, modify your User model, or force one authentication driver. Your Laravel application controls its UI, guards, User model, mail transport, and external providers.
 
 > [!IMPORTANT]
-> OneAuth 1.x is under active development. Read [Current implementation status](#current-implementation-status) before using it in production. Some provider integrations require application-level setup, and several planned security controls are not enforced yet.
+> OneAuth 1.x is under active development. Read [Current implementation status](#current-implementation-status) before using it in production. SMS and WhatsApp delivery remain extension stubs until you bind real providers.
 
 ## Contents
 
@@ -68,28 +68,37 @@ Laravel applications often combine multiple packages for session login, Sanctum,
 - JWT access tokens
 - Opaque JWT refresh tokens with rotation
 - Email OTP generation, delivery, hashing, expiration, cooldown, and attempt limits
+- Numeric and alphanumeric OTP types
+- Guest OTP send and OTP login
+- Optional anonymous (guest) login
 - Email verification tokens and temporary signed URLs
 - Laravel password broker integration
-- Password change and password history recording
-- Package TOTP verification and single-use recovery codes
-- Google and Apple Socialite adapters
-- Active session records
-- Device records
-- Login attempt records and Laravel rate limiting
-- JSON API routes
+- Password change, password history, and password expiration
+- TOTP, email OTP, and SMS OTP two-factor methods (SMS delivery needs a custom provider)
+- Single-use recovery codes and trusted-device 2FA skip
+- Socialite providers: Google, Apple, GitHub, Facebook, Microsoft, LinkedIn, Twitter, Discord
+- Active session records with revoke and logout-other-devices
+- Device records with user-agent parsing, trust flags, country, and timezone
+- Login attempt records, rate limiting, and persistent account locks
+- IP and country allow/block lists
+- Suspicious login detection for new devices
+- Audit log writes for authentication events
+- JSON API routes and exception envelope
 - Facade-based API
 - Middleware aliases
 - Authentication events
 - Install, publish, doctor, and cleanup commands
+- GitHub Actions test matrix for Laravel 9 through 13
 
 ### Integration required
 
 - Sanctum requires `laravel/sanctum` and `HasApiTokens`
-- Google and Apple login require Laravel Socialite and provider credentials
-- SMS and WhatsApp OTP require custom provider implementations
+- Social login requires Laravel Socialite and provider credentials
+- SMS and WhatsApp OTP or notifications require custom provider implementations
 - Session API routes require session middleware
 - JWT and Sanctum request authentication require guard or middleware wiring in the host application
 - Password reset requires Laravel's password broker, reset token storage, mail, and User provider configuration
+- Country restrictions rely on `CF-IPCountry`, `X-Country-Code`, request input, or `ONEAUTH_DEFAULT_COUNTRY`
 
 ### Not included
 
@@ -524,11 +533,14 @@ These routes use `oneauth.auth`:
 | `POST` | `/oneauth/email/verify` | Verify email token |
 | `POST` | `/oneauth/otp/send` | Send an OTP |
 | `POST` | `/oneauth/otp/verify` | Verify an OTP |
-| `POST` | `/oneauth/2fa/enable` | Enable 2FA |
+| `POST` | `/oneauth/2fa/enable` | Enable 2FA (returns secret, recovery codes, `otpauth_uri`) |
 | `POST` | `/oneauth/2fa/verify` | Verify TOTP or recovery code for an authenticated session |
 | `POST` | `/oneauth/2fa/disable` | Disable 2FA (requires password or 2FA code) |
 | `GET` | `/oneauth/sessions` | List tracked sessions |
+| `DELETE` | `/oneauth/sessions/{sessionId}` | Revoke one tracked session |
+| `POST` | `/oneauth/sessions/logout-others` | Revoke all sessions except the current one |
 | `GET` | `/oneauth/devices` | List tracked devices |
+| `POST` | `/oneauth/devices/{fingerprint}/trust` | Mark a device trusted or untrusted |
 | `POST` | `/oneauth/password/change` | Change current password |
 
 ### Register request
@@ -572,16 +584,18 @@ The default provider sends OTP codes through Laravel Mail.
 
 ```env
 ONEAUTH_OTP_PROVIDER=email
+ONEAUTH_OTP_TYPE=numeric
 ONEAUTH_OTP_LENGTH=6
 ONEAUTH_OTP_EXPIRES_IN=300
 ONEAUTH_OTP_MAX_ATTEMPTS=5
 ONEAUTH_OTP_COOLDOWN=30
 ```
 
-Send an OTP with the facade:
+Send an OTP with the facade. Authenticated users can omit the identifier. Guests can send a login OTP by email, username, or phone:
 
 ```php
 $challenge = OneAuth::sendOtp([
+    'email' => 'taylor@example.com',
     'purpose' => 'login',
     'channel' => 'email',
     'target' => 'taylor@example.com',
@@ -592,7 +606,18 @@ Verify an OTP:
 
 ```php
 $verified = OneAuth::verifyOtp([
+    'email' => 'taylor@example.com',
     'purpose' => 'login',
+    'target' => 'taylor@example.com',
+    'code' => '123456',
+]);
+```
+
+Complete an OTP login (verifies the code and establishes the configured driver session or tokens):
+
+```php
+$result = OneAuth::loginWithOtp([
+    'email' => 'taylor@example.com',
     'target' => 'taylor@example.com',
     'code' => '123456',
 ]);
@@ -604,24 +629,22 @@ HTTP requests:
 curl -X POST http://localhost/oneauth/otp/send \
   -H "Accept: application/json" \
   -H "Content-Type: application/json" \
-  -d '{"purpose":"login","channel":"email","target":"taylor@example.com"}'
+  -d '{"email":"taylor@example.com","purpose":"login","channel":"email","target":"taylor@example.com"}'
 
-curl -X POST http://localhost/oneauth/otp/verify \
+curl -X POST http://localhost/oneauth/login/otp \
   -H "Accept: application/json" \
   -H "Content-Type: application/json" \
-  -d '{"purpose":"login","target":"taylor@example.com","code":"123456"}'
+  -d '{"email":"taylor@example.com","target":"taylor@example.com","code":"123456"}'
 ```
 
 OTP security behavior:
 
-- Codes use `random_int`
+- Codes use `random_int` for numeric OTPs or secure alphanumeric generation
 - Codes are stored with Laravel Hash
 - Expiration is enforced
 - Attempt limits are enforced
 - Send cooldown is enforced
 - A verified code cannot be reused
-
-The user must already be authenticated before sending or verifying an OTP.
 
 ### Custom SMS or WhatsApp provider
 
@@ -705,7 +728,7 @@ ONEAUTH_REQUIRE_VERIFIED_EMAIL=true
 ```
 
 > [!NOTE]
-> The signed verification route is public, but the current verification action still requires an authenticated user. Use an authenticated browser session or implement an application verification controller that resolves the user safely from the signed request.
+> Guest verification with a token is supported through `OneAuth::verifyEmail` and the signed URL route. Authenticated users can also request a fresh verification email.
 
 ## Password management
 
@@ -765,9 +788,17 @@ OneAuth::changePassword([
 
 Set `password_policy.require_symbol` to `true` when symbol characters are required.
 
+Optional password expiration (days since last recorded password change; `0` disables):
+
+```env
+ONEAUTH_PASSWORD_EXPIRES_DAYS=90
+```
+
+Expired passwords block login until the user resets or changes their password.
+
 ## Two-factor authentication
 
-Enable 2FA (stores a pending secret until confirmed):
+Enable TOTP 2FA (stores a pending secret until confirmed):
 
 ```php
 $setup = OneAuth::enableTwoFactor([
@@ -775,22 +806,33 @@ $setup = OneAuth::enableTwoFactor([
 ]);
 ```
 
-The setup result returns the secret and plaintext recovery codes once:
+Enable email OTP 2FA (sends a confirmation OTP; SMS needs a custom OTP provider):
+
+```php
+$setup = OneAuth::enableTwoFactor([
+    'method' => 'email',
+]);
+```
+
+The TOTP setup result returns the secret and plaintext recovery codes once:
 
 ```php
 [
-    'secret' => 'generated-secret',
+    'method' => 'totp',
+    'secret' => 'BASE32SECRET',
     'recovery_codes' => [
         'RECOVERY01',
         'RECOVERY02',
     ],
     'confirmed' => false,
+    'otpauth_uri' => 'otpauth://totp/OneAuth:user@example.com?secret=...',
+    'issuer' => 'OneAuth',
 ]
 ```
 
-Store or display the recovery codes securely. OneAuth stores only their SHA-256 hashes.
+Render a QR code from `otpauth_uri` in your application UI. Secrets are RFC 4648 base32 for authenticator-app compatibility.
 
-Confirm setup with a package TOTP code (this sets `enabled` and fires `TwoFactorEnabled`):
+Confirm setup with a package TOTP or email/SMS OTP code (this sets `enabled` and fires `TwoFactorEnabled`):
 
 ```php
 $verified = OneAuth::verifyTwoFactor([
@@ -831,8 +873,16 @@ try {
 
 HTTP login returns `403` with `two_factor_required` and `challenge_token`. Finish with `POST /oneauth/2fa/challenge`.
 
+Skip 2FA on trusted devices when enabled:
+
+```env
+ONEAUTH_2FA_SKIP_TRUSTED_DEVICE=true
+```
+
+Mark a device trusted after login with `OneAuth::trustDevice($fingerprint)` or `POST /oneauth/devices/{fingerprint}/trust`.
+
 > [!WARNING]
-> The current TOTP secret format is package-specific and no `otpauth://` URI or QR code is generated. Verify compatibility before using a third-party authenticator app.
+> Pending 2FA secrets created before v1.2 used a package-specific secret format. Re-enable 2FA after upgrading if an older pending setup cannot be confirmed in an authenticator app.
 
 ## Social authentication
 
@@ -879,10 +929,18 @@ curl -X POST http://localhost/oneauth/social/google/login \
   -d '{"token":"provider-access-token"}'
 ```
 
-Supported provider names:
+Supported provider names (configure Socialite + `config/services.php` for each):
 
 - `google`
 - `apple`
+- `github`
+- `facebook`
+- `microsoft`
+- `linkedin`
+- `twitter`
+- `discord`
+
+Providers are resolved from `oneauth.social.providers` through a shared Socialite adapter.
 
 The social flow:
 
@@ -926,6 +984,58 @@ GET /oneauth/devices
 Session records use `ONEAUTH_IDLE_TIMEOUT` for their expiry timestamp.
 
 Device fingerprints and IP data are signals only. Do not treat them as proof of identity.
+
+Device rows store parsed browser, OS, and device name when `oneauth.devices.parse_user_agent` is true. Trust a device:
+
+```php
+OneAuth::trustDevice($fingerprint, true);
+```
+
+```bash
+curl -X POST http://localhost/oneauth/devices/{fingerprint}/trust \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"trusted":true}'
+```
+
+Revoke a session or other devices:
+
+```php
+OneAuth::revokeSession($sessionId);
+OneAuth::logoutOtherSessions();
+```
+
+### Anonymous login
+
+Opt-in guest accounts (disabled by default):
+
+```env
+ONEAUTH_ANONYMOUS_LOGIN=true
+```
+
+```php
+$result = OneAuth::anonymousLogin();
+```
+
+```bash
+curl -X POST http://localhost/oneauth/login/anonymous \
+  -H "Accept: application/json"
+```
+
+### Security controls
+
+```env
+ONEAUTH_MAX_LOGIN_ATTEMPTS=5
+ONEAUTH_LOCKOUT_SECONDS=300
+ONEAUTH_DETECT_SUSPICIOUS_LOGIN=true
+ONEAUTH_ALLOWED_IPS=
+ONEAUTH_BLOCKED_IPS=
+ONEAUTH_ALLOWED_COUNTRIES=
+ONEAUTH_BLOCKED_COUNTRIES=
+ONEAUTH_DEFAULT_COUNTRY=
+```
+
+After too many failed attempts OneAuth creates a row in `oneauth_account_locks`. Use `OneAuth::lockAccount()` / `OneAuth::unlockAccount()` for manual control. New-device logins dispatch `SuspiciousLoginDetected` when detection is enabled.
 
 ## Middleware
 
@@ -977,6 +1087,8 @@ Dispatched events:
 - `TwoFactorEnabled`
 - `TwoFactorDisabled`
 - `SocialLogin`
+- `SuspiciousLoginDetected`
+- `AccountLocked`
 
 All event objects expose:
 
@@ -1010,9 +1122,16 @@ ONEAUTH_ROUTE_PREFIX=oneauth
 ONEAUTH_REQUIRE_VERIFIED_EMAIL=false
 ONEAUTH_MAX_LOGIN_ATTEMPTS=5
 ONEAUTH_LOCKOUT_SECONDS=300
+ONEAUTH_PASSWORD_EXPIRES_DAYS=0
+ONEAUTH_DETECT_SUSPICIOUS_LOGIN=true
+ONEAUTH_ALLOWED_IPS=
+ONEAUTH_BLOCKED_IPS=
+ONEAUTH_ALLOWED_COUNTRIES=
+ONEAUTH_BLOCKED_COUNTRIES=
 
 # OTP
 ONEAUTH_OTP_PROVIDER=email
+ONEAUTH_OTP_TYPE=numeric
 ONEAUTH_OTP_LENGTH=6
 ONEAUTH_OTP_EXPIRES_IN=300
 ONEAUTH_OTP_MAX_ATTEMPTS=5
@@ -1030,6 +1149,14 @@ ONEAUTH_JWT_REFRESH_TTL=10080
 # Two factor
 ONEAUTH_2FA_ENABLED=true
 ONEAUTH_TOTP_ISSUER="${APP_NAME}"
+ONEAUTH_2FA_SKIP_TRUSTED_DEVICE=false
+
+# Anonymous
+ONEAUTH_ANONYMOUS_LOGIN=false
+
+# Devices
+ONEAUTH_DEFAULT_COUNTRY=
+ONEAUTH_DEFAULT_TIMEZONE=
 
 # Logging
 ONEAUTH_AUDIT_LOG_ENABLED=true
@@ -1064,7 +1191,8 @@ OneAuth uses morph columns instead of a foreign key to a specific users table.
 | `oneauth_login_attempts` | Successful and failed login attempts |
 | `oneauth_password_history` | Historical password hashes |
 | `oneauth_refresh_tokens` | Hashed JWT refresh tokens |
-| `oneauth_audit_logs` | Reserved audit log storage |
+| `oneauth_audit_logs` | Authentication and security audit events |
+| `oneauth_account_locks` | Persistent identifier locks after brute-force or manual lock |
 
 Migrations are safe to run more than once because each migration checks `Schema::hasTable()` before creating its table.
 
@@ -1115,7 +1243,7 @@ interface AuthenticationDriverInterface
 
 The current manager resolves only the built-in names `session`, `sanctum`, and `jwt`. To add a named driver, extend or replace `OneAuthManager` in the container.
 
-`NotificationProviderInterface` is available for extensions but has no default binding or package workflow in v1.
+`NotificationProviderInterface` defaults to the email implementation. SMS remains a stub until you bind a real provider.
 
 ## Artisan commands
 
@@ -1280,17 +1408,18 @@ Those providers are extension stubs. Bind your own `OTPProviderInterface` implem
 
 The following details are important for honest production evaluation:
 
-- Email OTP is implemented; SMS and WhatsApp OTP remain extension stubs (doctor fails if stubs are selected)
-- OTP cooldown, resend limit, and purpose-scoped session verification are enforced
-- Session, Sanctum, and JWT drivers issue credentials; JWT Bearer auth and refresh logout revoke are implemented
-- Google and Apple Socialite adapters exist and social login uses the shared login pipeline
-- Password policy enforces configured rules including optional symbols, history reuse prevention, and credential revoke on change/reset
-- Package TOTP exists with pending enable then confirm; login challenge continuation uses `challenge_token`
-- Signed email verification works for guests with a valid token/signature
-- Audit table and config exist, but automatic audit writes are not implemented
-- `ONEAUTH_2FA_ENABLED`, `ONEAUTH_TOTP_ISSUER`, and `ONEAUTH_AUDIT_LOG_ENABLED` are not fully applied by every action path
-- The package does not currently map all domain exceptions into a standardized JSON error response
-- Automated tests cover core flows; they do not prove the complete Laravel 9 to 13 matrix in CI
+- Email OTP and OTP login are implemented; SMS and WhatsApp OTP remain extension stubs (doctor fails if stubs are selected)
+- Session, Sanctum, and JWT drivers issue credentials with Bearer auth, refresh, and revoke flows
+- TOTP uses base32 secrets with `otpauth_uri`; email 2FA uses package OTP; SMS 2FA needs a custom OTP provider
+- Trusted devices can skip 2FA when `ONEAUTH_2FA_SKIP_TRUSTED_DEVICE` is true
+- Password expiration, account locks, IP/country allow and block lists, and suspicious-login events are enforced from config
+- Device rows parse browser, OS, and device name from the user agent
+- Anonymous login is opt-in via `ONEAUTH_ANONYMOUS_LOGIN`
+- Audit logs are written automatically when `ONEAUTH_AUDIT_LOG_ENABLED` is true
+- OneAuth exceptions return a JSON envelope (`message`, `error`, context) on package/API routes
+- Social login supports Google, Apple, GitHub, Facebook, Microsoft, LinkedIn, Twitter, and Discord via Socialite
+- Session revoke and logout-other-devices APIs are available on the facade and HTTP routes
+- GitHub Actions runs a Laravel 9–13 PHPUnit matrix on push and pull requests
 
 These notes are documented so developers can make an informed decision and contribute improvements.
 

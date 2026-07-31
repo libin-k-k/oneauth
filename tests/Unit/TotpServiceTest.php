@@ -13,6 +13,19 @@ class TotpServiceTest extends TestCase
         $secret = $service->generateSecret();
         $code = $service->nowCode($secret);
 
+        $this->assertMatchesRegularExpression('/^[A-Z2-7]+$/', $secret);
         $this->assertTrue($service->verify($secret, $code));
+    }
+
+    public function test_otpauth_uri_includes_issuer_and_secret(): void
+    {
+        config(['oneauth.two_factor.totp_issuer' => 'OneAuthTest']);
+        $service = new TotpService();
+        $secret = $service->generateSecret();
+        $uri = $service->otpauthUri($secret, 'user@example.com');
+
+        $this->assertStringStartsWith('otpauth://totp/', $uri);
+        $this->assertStringContainsString('secret=' . $secret, $uri);
+        $this->assertStringContainsString('issuer=OneAuthTest', $uri);
     }
 }

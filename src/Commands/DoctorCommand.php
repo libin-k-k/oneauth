@@ -24,6 +24,7 @@ class DoctorCommand extends Command
         'oneauth_password_history',
         'oneauth_refresh_tokens',
         'oneauth_audit_logs',
+        'oneauth_account_locks',
     ];
 
     public function handle(): int
