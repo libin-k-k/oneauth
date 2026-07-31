@@ -35,6 +35,7 @@ class RegisterAction
         }
 
         $user = $modelClass::query()->create($attributes);
+        $this->passwordPolicy->recordHistory($user);
         Event::dispatch(new UserRegistered($user));
 
         return ['user' => $user];

@@ -3,10 +3,10 @@
 namespace Libinkk\OneAuth\Drivers;
 
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
 use Libinkk\OneAuth\Contracts\AuthenticationDriverInterface;
 use Libinkk\OneAuth\Exceptions\AuthenticationException;
 use Libinkk\OneAuth\Support\JwtTokenService;
+use Libinkk\OneAuth\Support\PasswordVerifier;
 use Libinkk\OneAuth\Support\UserResolver;
 
 class JwtDriver implements AuthenticationDriverInterface
@@ -17,16 +17,18 @@ class JwtDriver implements AuthenticationDriverInterface
     {
     }
 
-    public function login(array $credentials): array
+    public function attempt(array $credentials): mixed
     {
         $identifier = (string) ($credentials['identifier'] ?? $credentials['email'] ?? $credentials['username'] ?? $credentials['phone'] ?? '');
         $password = (string) ($credentials['password'] ?? '');
         $user = UserResolver::queryByIdentifiers($identifier);
+        PasswordVerifier::assertValid($user, $password);
 
-        if (!$user || !Hash::check($password, (string) $user->password)) {
-            throw new AuthenticationException('Invalid credentials.');
-        }
+        return $user;
+    }
 
+    public function establish(mixed $user): array
+    {
         $accessToken = $this->jwt->issueAccessToken($user);
         $refreshToken = $this->jwt->issueRefreshToken($user);
         $this->lastToken = $accessToken;
@@ -35,8 +37,18 @@ class JwtDriver implements AuthenticationDriverInterface
         return ['user' => $user, 'token' => $accessToken, 'refresh_token' => $refreshToken];
     }
 
+    public function login(array $credentials): array
+    {
+        return $this->establish($this->attempt($credentials));
+    }
+
     public function logout(): void
     {
+        $user = $this->user();
+        if ($user) {
+            $this->jwt->revokeAllForUser($user);
+        }
+
         Auth::logout();
     }
 
@@ -54,12 +66,7 @@ class JwtDriver implements AuthenticationDriverInterface
             throw new AuthenticationException('User not found for refresh token.');
         }
 
-        $accessToken = $this->jwt->issueAccessToken($user);
-        $newRefreshToken = $this->jwt->issueRefreshToken($user);
-        $this->lastToken = $accessToken;
-        Auth::setUser($user);
-
-        return ['user' => $user, 'token' => $accessToken, 'refresh_token' => $newRefreshToken];
+        return $this->establish($user);
     }
 
     public function user(): mixed
@@ -80,5 +87,28 @@ class JwtDriver implements AuthenticationDriverInterface
     public function token(): ?string
     {
         return $this->lastToken;
+    }
+
+    public function authenticateBearer(?string $bearerToken): bool
+    {
+        if ($bearerToken === null || $bearerToken === '') {
+            return false;
+        }
+
+        try {
+            $payload = $this->jwt->decodeAccessToken($bearerToken);
+            $userClass = oneauth_user_model();
+            $user = $userClass::query()->find($payload->sub ?? null);
+            if (!$user) {
+                return false;
+            }
+
+            Auth::setUser($user);
+            $this->lastToken = $bearerToken;
+
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
     }
 }

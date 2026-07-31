@@ -21,6 +21,7 @@ clover.xml
 # Project docs (local / internal)
 /docs/
 oneauth-doc.md
+BUG-REPORT.md
 
 # IDE / editor
 .idea/

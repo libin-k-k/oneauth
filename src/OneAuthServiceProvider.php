@@ -13,7 +13,6 @@ use Libinkk\OneAuth\Contracts\DeviceRepositoryInterface;
 use Libinkk\OneAuth\Contracts\OTPProviderInterface;
 use Libinkk\OneAuth\Contracts\OAuthProviderInterface;
 use Libinkk\OneAuth\Contracts\SessionRepositoryInterface;
-use Libinkk\OneAuth\Drivers\SessionDriver;
 use Libinkk\OneAuth\Middleware\EnsureOtpVerified;
 use Libinkk\OneAuth\Middleware\EnsureTwoFactorVerified;
 use Libinkk\OneAuth\Middleware\EnsureVerified;
@@ -34,7 +33,9 @@ class OneAuthServiceProvider extends ServiceProvider
 
         $this->app->singleton(OneAuthManager::class, fn ($app) => new OneAuthManager($app));
 
-        $this->app->bind(AuthenticationDriverInterface::class, SessionDriver::class);
+        $this->app->bind(AuthenticationDriverInterface::class, function ($app) {
+            return $app->make(OneAuthManager::class)->driver();
+        });
         $this->app->bind(OTPProviderInterface::class, function ($app) {
             $provider = (string) config('oneauth.otp.provider', 'email');
             return match ($provider) {

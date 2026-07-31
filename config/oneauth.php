@@ -42,6 +42,7 @@ return [
     'social' => [
         'providers' => ['google', 'apple'],
         'create_user_if_missing' => true,
+        'link_by_email' => env('ONEAUTH_SOCIAL_LINK_BY_EMAIL', false),
     ],
 
     'password_policy' => [
@@ -57,6 +58,7 @@ return [
         'enabled' => env('ONEAUTH_2FA_ENABLED', true),
         'totp_issuer' => env('ONEAUTH_TOTP_ISSUER', env('APP_NAME', 'OneAuth')),
         'recovery_codes_count' => 8,
+        'challenge_ttl_seconds' => env('ONEAUTH_2FA_CHALLENGE_TTL', 300),
     ],
 
     'logging' => [
