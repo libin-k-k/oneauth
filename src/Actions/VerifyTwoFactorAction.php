@@ -25,7 +25,6 @@ class VerifyTwoFactorAction
         $pending = TwoFactor::query()
             ->where('authenticatable_type', $user::class)
             ->where('authenticatable_id', $user->getKey())
-            ->whereNotNull('secret_encrypted')
             ->where('enabled', false)
             ->exists();
 

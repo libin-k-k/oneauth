@@ -178,6 +178,8 @@ class FeatureCoverageTest extends TestCase
 
         $setup = OneAuth::enableTwoFactor(['method' => 'totp']);
         $this->assertArrayHasKey('secret', $setup);
+        $this->assertArrayHasKey('otpauth_uri', $setup);
+        $this->assertStringStartsWith('otpauth://totp/', $setup['otpauth_uri']);
         $this->assertCount(8, $setup['recovery_codes']);
         $this->assertFalse($setup['confirmed']);
         $this->assertDatabaseHas('oneauth_two_factor', [
@@ -946,5 +948,326 @@ class FeatureCoverageTest extends TestCase
         $this->assertDatabaseHas('oneauth_sessions', [
             'session_id' => 'other-device-session',
         ]);
+    }
+
+    public function test_audit_log_is_written_on_login_when_enabled(): void
+    {
+        config(['oneauth.logging.audit_enabled' => true]);
+
+        OneAuth::register([
+            'name' => 'Audit User',
+            'email' => 'audit@example.com',
+            'password' => 'Password123',
+        ]);
+
+        OneAuth::login([
+            'email' => 'audit@example.com',
+            'password' => 'Password123',
+        ]);
+
+        $this->assertDatabaseHas('oneauth_audit_logs', [
+            'event' => 'user.registered',
+        ]);
+        $this->assertDatabaseHas('oneauth_audit_logs', [
+            'event' => 'user.logged_in',
+        ]);
+    }
+
+    public function test_two_factor_enable_blocked_when_globally_disabled(): void
+    {
+        config(['oneauth.two_factor.enabled' => false]);
+
+        $user = User::query()->create([
+            'name' => 'No 2fa',
+            'email' => 'no2fa@example.com',
+            'password' => Hash::make('Password123'),
+        ]);
+        Auth::login($user);
+
+        $this->expectException(\Libinkk\OneAuth\Exceptions\OneAuthException::class);
+        OneAuth::enableTwoFactor(['method' => 'totp']);
+    }
+
+    public function test_revoke_session_and_logout_other_sessions(): void
+    {
+        OneAuth::register([
+            'name' => 'Session Api',
+            'email' => 'sessionapi@example.com',
+            'password' => 'Password123',
+        ]);
+        OneAuth::login([
+            'email' => 'sessionapi@example.com',
+            'password' => 'Password123',
+        ]);
+
+        \Libinkk\OneAuth\Models\Session::query()->create([
+            'authenticatable_type' => User::class,
+            'authenticatable_id' => Auth::id(),
+            'session_id' => 'kill-me',
+            'ip_address' => '127.0.0.1',
+            'user_agent' => 'Other',
+            'last_activity_at' => now(),
+            'expires_at' => now()->addHour(),
+        ]);
+
+        $this->assertTrue(OneAuth::revokeSession('kill-me'));
+        $this->assertDatabaseMissing('oneauth_sessions', ['session_id' => 'kill-me']);
+
+        \Libinkk\OneAuth\Models\Session::query()->create([
+            'authenticatable_type' => User::class,
+            'authenticatable_id' => Auth::id(),
+            'session_id' => 'another-device',
+            'ip_address' => '127.0.0.1',
+            'user_agent' => 'Other',
+            'last_activity_at' => now(),
+            'expires_at' => now()->addHour(),
+        ]);
+
+        $revoked = OneAuth::logoutOtherSessions();
+        $this->assertSame(1, $revoked);
+        $this->assertDatabaseMissing('oneauth_sessions', ['session_id' => 'another-device']);
+        $this->assertGreaterThanOrEqual(1, \Libinkk\OneAuth\Models\Session::query()->count());
+    }
+
+    public function test_invalid_login_route_returns_json_error_envelope(): void
+    {
+        $this->postJson('/oneauth/register', [
+            'name' => 'Json Err',
+            'email' => 'jsonerr@example.com',
+            'password' => 'Password123',
+        ])->assertCreated();
+
+        $this->postJson('/oneauth/login', [
+            'email' => 'jsonerr@example.com',
+            'password' => 'WrongPass1',
+        ])
+            ->assertUnauthorized()
+            ->assertJsonPath('error', 'AUTHENTICATION_FAILED');
+    }
+
+    public function test_password_expiration_blocks_login(): void
+    {
+        config(['oneauth.security.password_expires_days' => 30]);
+
+        OneAuth::register([
+            'name' => 'Expired Pass',
+            'email' => 'expiredpass@example.com',
+            'password' => 'Password123',
+        ]);
+
+        \Libinkk\OneAuth\Models\PasswordHistory::query()->update([
+            'changed_at' => now()->subDays(45),
+        ]);
+
+        $this->expectException(AuthenticationException::class);
+        OneAuth::login([
+            'email' => 'expiredpass@example.com',
+            'password' => 'Password123',
+        ]);
+    }
+
+    public function test_account_lock_blocks_login_after_max_attempts(): void
+    {
+        config([
+            'oneauth.security.max_login_attempts' => 2,
+            'oneauth.security.lockout_seconds' => 600,
+        ]);
+
+        OneAuth::register([
+            'name' => 'Lock User',
+            'email' => 'lock@example.com',
+            'password' => 'Password123',
+        ]);
+
+        try {
+            OneAuth::login(['email' => 'lock@example.com', 'password' => 'WrongPass1']);
+        } catch (AuthenticationException) {
+        }
+
+        try {
+            OneAuth::login(['email' => 'lock@example.com', 'password' => 'WrongPass1']);
+        } catch (AuthenticationException) {
+        }
+
+        $this->assertTrue(\Libinkk\OneAuth\Models\AccountLock::query()->where('identifier', 'lock@example.com')->exists());
+
+        $this->expectException(AuthenticationException::class);
+        OneAuth::login(['email' => 'lock@example.com', 'password' => 'Password123']);
+    }
+
+    public function test_blocked_ip_is_rejected(): void
+    {
+        config(['oneauth.security.blocked_ips' => ['127.0.0.1']]);
+
+        OneAuth::register([
+            'name' => 'Ip Block',
+            'email' => 'ipblock@example.com',
+            'password' => 'Password123',
+        ]);
+
+        $this->expectException(AuthenticationException::class);
+        OneAuth::login([
+            'email' => 'ipblock@example.com',
+            'password' => 'Password123',
+        ]);
+    }
+
+    public function test_device_user_agent_is_parsed(): void
+    {
+        request()->headers->set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36');
+
+        OneAuth::register([
+            'name' => 'Ua User',
+            'email' => 'ua@example.com',
+            'password' => 'Password123',
+        ]);
+
+        OneAuth::login([
+            'email' => 'ua@example.com',
+            'password' => 'Password123',
+        ]);
+
+        $device = \Libinkk\OneAuth\Models\Device::query()->first();
+        $this->assertNotNull($device);
+        $this->assertSame('Chrome', $device->browser);
+        $this->assertSame('Windows', $device->os);
+        $this->assertSame('Desktop', $device->device_name);
+    }
+
+    public function test_trusted_device_can_skip_two_factor(): void
+    {
+        config(['oneauth.two_factor.skip_on_trusted_device' => true]);
+
+        $user = User::query()->create([
+            'name' => 'Trusted 2FA',
+            'email' => 'trusted2fa@example.com',
+            'password' => Hash::make('Password123'),
+        ]);
+        Auth::login($user);
+
+        $setup = OneAuth::enableTwoFactor(['method' => 'totp']);
+        $code = app(TotpService::class)->nowCode($setup['secret']);
+        OneAuth::verifyTwoFactor(['code' => $code]);
+        OneAuth::logout();
+
+        $fingerprint = sha1((string) request()->userAgent() . '|' . request()->ip());
+        \Libinkk\OneAuth\Models\Device::query()->create([
+            'authenticatable_type' => $user::class,
+            'authenticatable_id' => $user->getKey(),
+            'fingerprint' => $fingerprint,
+            'trusted' => true,
+            'first_login_at' => now(),
+            'last_login_at' => now(),
+        ]);
+
+        $login = OneAuth::login([
+            'email' => 'trusted2fa@example.com',
+            'password' => 'Password123',
+        ]);
+
+        $this->assertNotNull($login['user']);
+        $this->assertTrue(Auth::check());
+    }
+
+    public function test_alphanumeric_otp_is_generated(): void
+    {
+        Mail::fake();
+        config(['oneauth.otp.type' => 'alphanumeric', 'oneauth.otp.length' => 8]);
+
+        $user = User::query()->create([
+            'name' => 'Alpha Otp',
+            'email' => 'alphaotp@example.com',
+            'password' => Hash::make('Password123'),
+        ]);
+
+        $sent = OneAuth::sendOtp([
+            'email' => 'alphaotp@example.com',
+            'purpose' => 'login',
+            'channel' => 'email',
+            'target' => 'alphaotp@example.com',
+        ]);
+
+        $this->assertArrayHasKey('id', $sent);
+        $otp = Otp::query()->find($sent['id']);
+        $this->assertSame('alphanumeric', $otp->meta['type'] ?? null);
+    }
+
+    public function test_email_two_factor_enable_and_confirm(): void
+    {
+        Mail::fake();
+
+        $user = User::query()->create([
+            'name' => 'Email 2FA',
+            'email' => 'email2fa@example.com',
+            'password' => Hash::make('Password123'),
+        ]);
+        Auth::login($user);
+
+        $setup = OneAuth::enableTwoFactor(['method' => 'email']);
+        $this->assertSame('email', $setup['method']);
+        $this->assertArrayHasKey('otp', $setup);
+
+        $code = '112233';
+        Otp::query()->where('id', $setup['otp']['id'])->update([
+            'code_hash' => Hash::make($code),
+        ]);
+
+        $this->assertTrue(OneAuth::verifyTwoFactor(['code' => $code]));
+        $this->assertDatabaseHas('oneauth_two_factor', [
+            'authenticatable_id' => $user->getKey(),
+            'enabled' => true,
+            'method' => 'email',
+        ]);
+    }
+
+    public function test_otp_login_establishes_session(): void
+    {
+        Mail::fake();
+
+        OneAuth::register([
+            'name' => 'Otp Login',
+            'email' => 'otplogin@example.com',
+            'password' => 'Password123',
+        ]);
+
+        OneAuth::sendOtp([
+            'email' => 'otplogin@example.com',
+            'purpose' => 'login',
+            'channel' => 'email',
+            'target' => 'otplogin@example.com',
+        ]);
+
+        $otp = Otp::query()->latest('id')->first();
+        $code = '998877';
+        $otp->update(['code_hash' => Hash::make($code)]);
+
+        $login = OneAuth::loginWithOtp([
+            'email' => 'otplogin@example.com',
+            'target' => 'otplogin@example.com',
+            'code' => $code,
+        ]);
+
+        $this->assertNotNull($login['user']);
+        $this->assertTrue(Auth::check());
+    }
+
+    public function test_anonymous_login_creates_guest_user(): void
+    {
+        config(['oneauth.anonymous.enabled' => true]);
+
+        $login = OneAuth::anonymousLogin();
+
+        $this->assertNotNull($login['user']);
+        $this->assertTrue(Auth::check());
+        $this->assertStringStartsWith('guest_', (string) $login['user']->email);
+    }
+
+    public function test_notification_provider_email_is_bound(): void
+    {
+        $provider = app(\Libinkk\OneAuth\Contracts\NotificationProviderInterface::class);
+        $this->assertInstanceOf(
+            \Libinkk\OneAuth\Providers\Notification\EmailNotificationProvider::class,
+            $provider
+        );
     }
 }

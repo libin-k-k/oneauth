@@ -4,7 +4,6 @@ namespace Libinkk\OneAuth\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Libinkk\OneAuth\Exceptions\TwoFactorRequiredException;
 use Libinkk\OneAuth\OneAuthManager;
 
 class OneAuthController
@@ -20,11 +19,17 @@ class OneAuthController
 
     public function login(Request $request): JsonResponse
     {
-        try {
-            return response()->json($this->auth->login($request->all()));
-        } catch (TwoFactorRequiredException $exception) {
-            return $this->twoFactorRequiredResponse($exception);
-        }
+        return response()->json($this->auth->login($request->all()));
+    }
+
+    public function anonymousLogin(Request $request): JsonResponse
+    {
+        return response()->json($this->auth->anonymousLogin($request->all()), 201);
+    }
+
+    public function loginWithOtp(Request $request): JsonResponse
+    {
+        return response()->json($this->auth->loginWithOtp($request->all()));
     }
 
     public function logout(): JsonResponse
@@ -94,11 +99,7 @@ class OneAuthController
 
     public function socialLogin(Request $request, string $provider): JsonResponse
     {
-        try {
-            return response()->json($this->auth->socialLogin($provider, $request->all()));
-        } catch (TwoFactorRequiredException $exception) {
-            return $this->twoFactorRequiredResponse($exception);
-        }
+        return response()->json($this->auth->socialLogin($provider, $request->all()));
     }
 
     public function sessions(): JsonResponse
@@ -106,17 +107,31 @@ class OneAuthController
         return response()->json(['sessions' => $this->auth->sessions()]);
     }
 
+    public function revokeSession(string $sessionId): JsonResponse
+    {
+        return response()->json([
+            'revoked' => $this->auth->revokeSession($sessionId),
+        ]);
+    }
+
+    public function logoutOtherSessions(): JsonResponse
+    {
+        return response()->json([
+            'revoked' => $this->auth->logoutOtherSessions(),
+        ]);
+    }
+
     public function devices(): JsonResponse
     {
         return response()->json(['devices' => $this->auth->devices()]);
     }
 
-    protected function twoFactorRequiredResponse(TwoFactorRequiredException $exception): JsonResponse
+    public function trustDevice(Request $request, string $fingerprint): JsonResponse
     {
+        $trusted = filter_var($request->input('trusted', true), FILTER_VALIDATE_BOOLEAN);
+
         return response()->json([
-            'message' => $exception->getMessage(),
-            'two_factor_required' => true,
-            'challenge_token' => $exception->getChallengeToken(),
-        ], 403);
+            'trusted' => $this->auth->trustDevice($fingerprint, $trusted),
+        ]);
     }
 }
