@@ -9,7 +9,9 @@ Route::group([
 ], function (): void {
     Route::post('/register', [OneAuthController::class, 'register']);
     Route::post('/login', [OneAuthController::class, 'login']);
+    Route::post('/refresh', [OneAuthController::class, 'refresh']);
     Route::post('/social/{provider}/login', [OneAuthController::class, 'socialLogin']);
+    Route::post('/2fa/challenge', [OneAuthController::class, 'completeTwoFactorLogin']);
     Route::get('/email/verify/signed', [OneAuthController::class, 'verifySignedEmail'])->name('oneauth.email.verify.signed');
     Route::post('/password/forgot', [\Libinkk\OneAuth\Http\Controllers\PasswordController::class, 'forgot']);
     Route::post('/password/reset', [\Libinkk\OneAuth\Http\Controllers\PasswordController::class, 'reset']);
@@ -17,7 +19,6 @@ Route::group([
     Route::middleware('oneauth.auth')->group(function (): void {
         Route::post('/logout', [OneAuthController::class, 'logout']);
         Route::get('/user', [OneAuthController::class, 'user']);
-        Route::post('/refresh', [OneAuthController::class, 'refresh']);
         Route::post('/email/verify', [OneAuthController::class, 'verifyEmail']);
         Route::post('/email/send-verification', [OneAuthController::class, 'sendEmailVerification']);
         Route::post('/otp/send', [OneAuthController::class, 'sendOtp']);

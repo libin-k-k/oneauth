@@ -25,6 +25,10 @@ class TestCase extends Orchestra
         ]);
         $app['config']->set('app.key', 'base64:' . base64_encode(random_bytes(32)));
         $app['config']->set('oneauth.user_model', User::class);
+        $app['config']->set('oneauth.driver', 'session');
+        $app['config']->set('oneauth.routes.enabled', true);
+        $app['config']->set('mail.default', 'array');
+        $app['config']->set('oneauth.jwt.secret', 'test-jwt-secret-key-for-oneauth');
     }
 
     protected function defineDatabaseMigrations(): void
@@ -40,5 +44,21 @@ class TestCase extends Orchestra
             $table->rememberToken();
             $table->timestamps();
         });
+    }
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->attachSessionToRequest();
+    }
+
+    protected function attachSessionToRequest(): void
+    {
+        $session = $this->app->make('session.store');
+        $session->start();
+
+        $request = $this->app->make('request');
+        $request->setLaravelSession($session);
     }
 }

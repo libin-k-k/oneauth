@@ -21,16 +21,20 @@ class VerifyOtpAction
             throw new AuthenticationException('User is not authenticated.');
         }
 
+        $purpose = (string) ($payload['purpose'] ?? 'login');
+
         $ok = $this->otpService->verify(
             $user,
-            (string) ($payload['purpose'] ?? 'login'),
+            $purpose,
             (string) ($payload['target'] ?? $user->email ?? ''),
             (string) ($payload['code'] ?? '')
         );
 
         if ($ok) {
             Event::dispatch(new OTPVerified($user));
-            session(['oneauth.otp_verified' => true]);
+            if (request()->hasSession()) {
+                session(['oneauth.otp_verified' => $purpose]);
+            }
         }
 
         return $ok;

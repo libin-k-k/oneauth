@@ -6,13 +6,16 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
 use Libinkk\OneAuth\Events\PasswordReset;
-use Libinkk\OneAuth\Models\PasswordHistory;
+use Libinkk\OneAuth\Support\CredentialRevoker;
 use Libinkk\OneAuth\Support\PasswordPolicy;
+use Libinkk\OneAuth\Support\UserResolver;
 
 class ResetPasswordAction
 {
-    public function __construct(private PasswordPolicy $passwordPolicy)
-    {
+    public function __construct(
+        private PasswordPolicy $passwordPolicy,
+        private CredentialRevoker $credentialRevoker
+    ) {
     }
 
     public function execute(array $payload): string
@@ -20,21 +23,23 @@ class ResetPasswordAction
         $password = (string) ($payload['password'] ?? '');
         $this->passwordPolicy->validate($password);
 
+        $email = (string) ($payload['email'] ?? '');
+        $existing = UserResolver::queryByIdentifiers($email);
+        if ($existing) {
+            $this->passwordPolicy->assertNotReused($existing, $password);
+        }
+
         return Password::reset(
             [
-                'email' => (string) ($payload['email'] ?? ''),
+                'email' => $email,
                 'token' => (string) ($payload['token'] ?? ''),
                 'password' => $password,
                 'password_confirmation' => (string) ($payload['password_confirmation'] ?? $password),
             ],
             function ($user) use ($password): void {
                 $user->forceFill(['password' => Hash::make($password)])->save();
-                PasswordHistory::query()->create([
-                    'authenticatable_type' => $user::class,
-                    'authenticatable_id' => $user->getKey(),
-                    'password_hash' => $user->password,
-                    'changed_at' => now(),
-                ]);
+                $this->passwordPolicy->recordHistory($user);
+                $this->credentialRevoker->revokeAll($user);
                 Event::dispatch(new PasswordReset($user));
             }
         );

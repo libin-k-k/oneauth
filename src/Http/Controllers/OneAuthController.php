@@ -4,7 +4,7 @@ namespace Libinkk\OneAuth\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Libinkk\OneAuth\Exceptions\OneAuthException;
+use Libinkk\OneAuth\Exceptions\TwoFactorRequiredException;
 use Libinkk\OneAuth\OneAuthManager;
 
 class OneAuthController
@@ -20,7 +20,11 @@ class OneAuthController
 
     public function login(Request $request): JsonResponse
     {
-        return response()->json($this->auth->login($request->all()));
+        try {
+            return response()->json($this->auth->login($request->all()));
+        } catch (TwoFactorRequiredException $exception) {
+            return $this->twoFactorRequiredResponse($exception);
+        }
     }
 
     public function logout(): JsonResponse
@@ -83,9 +87,18 @@ class OneAuthController
         return response()->json(['verified' => $this->auth->verifyTwoFactor($request->all())]);
     }
 
+    public function completeTwoFactorLogin(Request $request): JsonResponse
+    {
+        return response()->json($this->auth->completeTwoFactorLogin($request->all()));
+    }
+
     public function socialLogin(Request $request, string $provider): JsonResponse
     {
-        return response()->json($this->auth->socialLogin($provider, $request->all()));
+        try {
+            return response()->json($this->auth->socialLogin($provider, $request->all()));
+        } catch (TwoFactorRequiredException $exception) {
+            return $this->twoFactorRequiredResponse($exception);
+        }
     }
 
     public function sessions(): JsonResponse
@@ -96,5 +109,14 @@ class OneAuthController
     public function devices(): JsonResponse
     {
         return response()->json(['devices' => $this->auth->devices()]);
+    }
+
+    protected function twoFactorRequiredResponse(TwoFactorRequiredException $exception): JsonResponse
+    {
+        return response()->json([
+            'message' => $exception->getMessage(),
+            'two_factor_required' => true,
+            'challenge_token' => $exception->getChallengeToken(),
+        ], 403);
     }
 }

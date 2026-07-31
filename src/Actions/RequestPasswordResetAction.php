@@ -9,6 +9,9 @@ class RequestPasswordResetAction
     public function execute(array $payload): string
     {
         $email = (string) ($payload['email'] ?? '');
-        return Password::sendResetLink(['email' => $email]);
+        Password::sendResetLink(['email' => $email]);
+
+        // Always return the success status to avoid email enumeration.
+        return Password::RESET_LINK_SENT;
     }
 }

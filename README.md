@@ -364,8 +364,8 @@ curl -X POST http://localhost/oneauth/refresh \
 
 Refresh tokens are stored as SHA-256 hashes and rotated after use.
 
-> [!WARNING]
-> OneAuth currently issues and rotates JWTs but does not include Bearer JWT request middleware. Your application must decode the access token, resolve the User, and set Laravel's Auth user before using `oneauth.auth`. JWT logout also does not revoke all outstanding refresh tokens.
+> [!NOTE]
+> OneAuth issues and rotates JWTs, authenticates Bearer access tokens in `oneauth.auth`, and revokes refresh tokens plus recently issued access tokens on logout and credential revoke.
 
 ## Facade API tutorial
 
@@ -505,7 +505,9 @@ Content-Type: application/json
 | --- | --- | --- |
 | `POST` | `/oneauth/register` | Register a user |
 | `POST` | `/oneauth/login` | Authenticate credentials |
+| `POST` | `/oneauth/refresh` | Refresh driver credentials (JWT refresh token) |
 | `POST` | `/oneauth/social/{provider}/login` | Authenticate with Google or Apple token |
+| `POST` | `/oneauth/2fa/challenge` | Complete login after a 2FA challenge token |
 | `GET` | `/oneauth/email/verify/signed` | Process a temporary signed verification URL |
 | `POST` | `/oneauth/password/forgot` | Send a Laravel password reset link |
 | `POST` | `/oneauth/password/reset` | Reset a password with broker token |
@@ -518,14 +520,13 @@ These routes use `oneauth.auth`:
 | --- | --- | --- |
 | `POST` | `/oneauth/logout` | Log out |
 | `GET` | `/oneauth/user` | Return current user |
-| `POST` | `/oneauth/refresh` | Refresh driver credentials |
 | `POST` | `/oneauth/email/send-verification` | Send verification token and link |
 | `POST` | `/oneauth/email/verify` | Verify email token |
 | `POST` | `/oneauth/otp/send` | Send an OTP |
 | `POST` | `/oneauth/otp/verify` | Verify an OTP |
 | `POST` | `/oneauth/2fa/enable` | Enable 2FA |
-| `POST` | `/oneauth/2fa/verify` | Verify TOTP or recovery code |
-| `POST` | `/oneauth/2fa/disable` | Disable 2FA |
+| `POST` | `/oneauth/2fa/verify` | Verify TOTP or recovery code for an authenticated session |
+| `POST` | `/oneauth/2fa/disable` | Disable 2FA (requires password or 2FA code) |
 | `GET` | `/oneauth/sessions` | List tracked sessions |
 | `GET` | `/oneauth/devices` | List tracked devices |
 | `POST` | `/oneauth/password/change` | Change current password |
@@ -745,14 +746,28 @@ curl -X POST http://localhost/oneauth/password/change \
   }'
 ```
 
-Password resets and changes record the resulting hash in `oneauth_password_history`.
+Password resets and changes record the resulting hash in `oneauth_password_history`, reject reuse against the configured `history_limit`, prune older history rows, and revoke OneAuth sessions plus Sanctum/JWT credentials.
 
-> [!NOTE]
-> Password history is recorded but reuse prevention and history pruning are not currently enforced. The `require_symbol` config value is also not enforced by the current password policy implementation.
+Facade helpers:
+
+```php
+OneAuth::forgotPassword(['email' => 'user@example.com']);
+OneAuth::resetPassword([
+    'email' => 'user@example.com',
+    'token' => $brokerToken,
+    'password' => 'NewPassword123',
+]);
+OneAuth::changePassword([
+    'current_password' => 'Password123',
+    'new_password' => 'NewPassword123',
+]);
+```
+
+Set `password_policy.require_symbol` to `true` when symbol characters are required.
 
 ## Two-factor authentication
 
-Enable 2FA:
+Enable 2FA (stores a pending secret until confirmed):
 
 ```php
 $setup = OneAuth::enableTwoFactor([
@@ -769,12 +784,13 @@ The setup result returns the secret and plaintext recovery codes once:
         'RECOVERY01',
         'RECOVERY02',
     ],
+    'confirmed' => false,
 ]
 ```
 
 Store or display the recovery codes securely. OneAuth stores only their SHA-256 hashes.
 
-Verify a package TOTP code:
+Confirm setup with a package TOTP code (this sets `enabled` and fires `TwoFactorEnabled`):
 
 ```php
 $verified = OneAuth::verifyTwoFactor([
@@ -790,16 +806,33 @@ $verified = OneAuth::verifyTwoFactor([
 ]);
 ```
 
-Disable 2FA:
+Disable 2FA (requires current password or a valid TOTP/recovery code):
 
 ```php
-OneAuth::disableTwoFactor([]);
+OneAuth::disableTwoFactor([
+    'password' => $currentPassword,
+]);
 ```
 
 The encrypted secret and recovery codes are cleared when disabled.
 
+When login requires 2FA, OneAuth throws `TwoFactorRequiredException` with a short-lived `challenge_token`. Complete the login:
+
+```php
+try {
+    $result = OneAuth::login($credentials);
+} catch (\Libinkk\OneAuth\Exceptions\TwoFactorRequiredException $e) {
+    $result = OneAuth::completeTwoFactorLogin([
+        'challenge_token' => $e->getChallengeToken(),
+        'code' => $totpCode,
+    ]);
+}
+```
+
+HTTP login returns `403` with `two_factor_required` and `challenge_token`. Finish with `POST /oneauth/2fa/challenge`.
+
 > [!WARNING]
-> The current TOTP secret format is package-specific and no `otpauth://` URI or QR code is generated. Verify compatibility before using a third-party authenticator app. The login pipeline detects enabled 2FA and throws `TwoFactorRequiredException`, but a complete login challenge continuation flow is not implemented yet.
+> The current TOTP secret format is package-specific and no `otpauth://` URI or QR code is generated. Verify compatibility before using a third-party authenticator app.
 
 ## Social authentication
 
@@ -855,15 +888,13 @@ The social flow:
 
 1. Resolves the remote user through Socialite `userFromToken`
 2. Finds an existing `oneauth_social_accounts` link
-3. Falls back to matching the returned email
-4. Creates a user when `social.create_user_if_missing` is true
+3. Optionally links a verified email match when `social.link_by_email` is true (default `false`)
+4. Creates a user when `social.create_user_if_missing` is true and no conflicting email exists
 5. Links the provider account
 6. Dispatches `SocialLogin`
+7. Runs the shared login pipeline (verified-email gate, 2FA challenge, then `establish` for the active driver)
 
 Apple may require a compatible Socialite provider adapter and Laravel event registration because Apple is not included in every Socialite installation.
-
-> [!WARNING]
-> JWT social login currently reaches the JWT refresh path without first issuing a refresh token. Use session or Sanctum for this flow, or provide an application-specific JWT social completion action.
 
 ## Sessions and devices
 
@@ -1179,13 +1210,10 @@ Before production use:
 - Restrict mass assignment on the User model
 - Remove identifier fields that do not exist in your users table
 - Configure session cookies, CSRF, CORS, and stateful domains
-- Add Bearer token authentication middleware for JWT or Sanctum
+- Use `oneauth.auth` for JWT Bearer protection; wire Sanctum middleware when using the Sanctum driver
+- Keep `social.link_by_email` disabled unless you accept verified-email auto-linking
 - Bind production SMS or WhatsApp providers before selecting them
 - Add application-level request validation and exception mapping
-- Review account enumeration responses
-- Add token and session revocation policies
-- Test concurrent OTP and refresh token requests
-- Monitor login attempts and provider failures
 - Schedule `oneauth:cleanup`
 - Back up data before package upgrades
 
@@ -1226,13 +1254,7 @@ The default route middleware is `api`. Publish the config and change route middl
 
 ### Unauthenticated with a valid JWT
 
-JWT issuance does not authenticate future requests automatically. Add middleware that:
-
-1. Reads the Bearer token
-2. Decodes and validates it
-3. Resolves the configured User
-4. Sets Laravel's current Auth user
-5. Continues to `oneauth.auth`
+`oneauth.auth` accepts a Bearer JWT access token when the JWT driver (or a valid OneAuth JWT) is present. Confirm `ONEAUTH_JWT_SECRET` matches the issuing app and that the token has not expired.
 
 ### Sanctum is not installed
 
@@ -1252,39 +1274,25 @@ Then configure `config/services.php`.
 
 ### SMS or WhatsApp OTP throws an exception
 
-These providers are extension stubs. Bind your own `OTPProviderInterface` implementation.
-
-### Invalid credentials after successful login attempts
-
-The rate limiter currently consumes an attempt before every login, including successful attempts. Wait for `ONEAUTH_LOCKOUT_SECONDS` or clear the relevant Laravel rate limiter key while developing.
-
-### Email verification link requires login
-
-The current verification action requires `Auth::user()`. Open the signed URL in an authenticated session or implement a host application verification controller.
+Those providers are extension stubs. Bind your own `OTPProviderInterface` implementation, switch `oneauth.otp.provider` to `email`, or run `php artisan oneauth:doctor` to confirm the configuration.
 
 ## Current implementation status
 
 The following details are important for honest production evaluation:
 
-- Email OTP is implemented
-- SMS and WhatsApp OTP are extension stubs
-- OTP resend limit is configured but not enforced
-- Session, Sanctum token issuance, and JWT token issuance are implemented
-- JWT Bearer request authentication middleware is not implemented
-- JWT logout does not revoke all refresh tokens
-- Google and Apple Socialite adapters exist
-- JWT social login completion needs an application-specific flow
-- Password history is recorded but password reuse prevention is not enforced
-- `require_symbol` is configured but not enforced
-- Package TOTP exists, but no standard authenticator QR setup is generated
-- The 2FA login continuation flow is incomplete
-- The signed email route still requires an authenticated user
+- Email OTP is implemented; SMS and WhatsApp OTP remain extension stubs (doctor fails if stubs are selected)
+- OTP cooldown, resend limit, and purpose-scoped session verification are enforced
+- Session, Sanctum, and JWT drivers issue credentials; JWT Bearer auth and refresh logout revoke are implemented
+- Google and Apple Socialite adapters exist and social login uses the shared login pipeline
+- Password policy enforces configured rules including optional symbols, history reuse prevention, and credential revoke on change/reset
+- Package TOTP exists with pending enable then confirm; login challenge continuation uses `challenge_token`
+- Signed email verification works for guests with a valid token/signature
 - Audit table and config exist, but automatic audit writes are not implemented
-- `ONEAUTH_2FA_ENABLED`, `ONEAUTH_TOTP_ISSUER`, and `ONEAUTH_AUDIT_LOG_ENABLED` are not fully applied by current actions
-- The package does not currently map domain exceptions into a standardized JSON error response
-- Existing automated test coverage is limited and does not prove the complete Laravel 9 to 13 matrix
+- `ONEAUTH_2FA_ENABLED`, `ONEAUTH_TOTP_ISSUER`, and `ONEAUTH_AUDIT_LOG_ENABLED` are not fully applied by every action path
+- The package does not currently map all domain exceptions into a standardized JSON error response
+- Automated tests cover core flows; they do not prove the complete Laravel 9 to 13 matrix in CI
 
-These limitations are documented so developers can make an informed decision and contribute improvements.
+These notes are documented so developers can make an informed decision and contribute improvements.
 
 ## Contributing
 
@@ -1309,11 +1317,11 @@ Contribution rules:
 
 Repository:
 
-`https://github.com/libinkk/oneauth`
+`https://github.com/libin-k-k/oneauth`
 
 Issues:
 
-`https://github.com/libinkk/oneauth/issues`
+`https://github.com/libin-k-k/oneauth/issues`
 
 ## Support
 

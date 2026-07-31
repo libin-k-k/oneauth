@@ -3,17 +3,17 @@
 namespace Libinkk\OneAuth\Drivers;
 
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
 use Libinkk\OneAuth\Contracts\AuthenticationDriverInterface;
 use Libinkk\OneAuth\Exceptions\AuthenticationException;
 use Libinkk\OneAuth\Exceptions\OneAuthException;
+use Libinkk\OneAuth\Support\PasswordVerifier;
 use Libinkk\OneAuth\Support\UserResolver;
 
 class SanctumDriver implements AuthenticationDriverInterface
 {
     protected ?string $lastToken = null;
 
-    public function login(array $credentials): array
+    public function attempt(array $credentials): mixed
     {
         if (!class_exists(\Laravel\Sanctum\HasApiTokens::class)) {
             throw new OneAuthException('Sanctum is not installed.');
@@ -22,9 +22,15 @@ class SanctumDriver implements AuthenticationDriverInterface
         $identifier = (string) ($credentials['identifier'] ?? $credentials['email'] ?? $credentials['username'] ?? $credentials['phone'] ?? '');
         $password = (string) ($credentials['password'] ?? '');
         $user = UserResolver::queryByIdentifiers($identifier);
+        PasswordVerifier::assertValid($user, $password);
 
-        if (!$user || !Hash::check($password, (string) $user->password)) {
-            throw new AuthenticationException('Invalid credentials.');
+        return $user;
+    }
+
+    public function establish(mixed $user): array
+    {
+        if (!method_exists($user, 'createToken')) {
+            throw new OneAuthException('Sanctum is not installed.');
         }
 
         $token = $user->createToken('oneauth')->plainTextToken;
@@ -32,6 +38,11 @@ class SanctumDriver implements AuthenticationDriverInterface
         Auth::setUser($user);
 
         return ['user' => $user, 'token' => $token, 'refresh_token' => null];
+    }
+
+    public function login(array $credentials): array
+    {
+        return $this->establish($this->attempt($credentials));
     }
 
     public function logout(): void
@@ -50,10 +61,13 @@ class SanctumDriver implements AuthenticationDriverInterface
             throw new AuthenticationException('User is not authenticated.');
         }
 
-        $token = $user->createToken('oneauth')->plainTextToken;
-        $this->lastToken = $token;
+        if (method_exists($user, 'currentAccessToken') && $user->currentAccessToken()) {
+            $user->currentAccessToken()->delete();
+        } elseif (method_exists($user, 'tokens')) {
+            $user->tokens()->where('name', 'oneauth')->delete();
+        }
 
-        return ['user' => $user, 'token' => $token, 'refresh_token' => null];
+        return $this->establish($user);
     }
 
     public function user(): mixed

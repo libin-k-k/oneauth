@@ -4,11 +4,13 @@ namespace Libinkk\OneAuth;
 
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Facades\Event;
-use Libinkk\OneAuth\Events\UserLoggedOut;
 use Libinkk\OneAuth\Contracts\AuthenticationDriverInterface;
+use Libinkk\OneAuth\Contracts\DeviceRepositoryInterface;
+use Libinkk\OneAuth\Contracts\SessionRepositoryInterface;
 use Libinkk\OneAuth\Drivers\JwtDriver;
 use Libinkk\OneAuth\Drivers\SanctumDriver;
 use Libinkk\OneAuth\Drivers\SessionDriver;
+use Libinkk\OneAuth\Events\UserLoggedOut;
 use Libinkk\OneAuth\Exceptions\OneAuthException;
 
 class OneAuthManager
@@ -42,6 +44,9 @@ class OneAuthManager
     public function logout(): void
     {
         $user = $this->driver()->user();
+        if ($user) {
+            app(SessionRepositoryInterface::class)->revokeCurrent($user);
+        }
         $this->driver()->logout();
         if ($user) {
             Event::dispatch(new UserLoggedOut($user));
@@ -93,20 +98,50 @@ class OneAuthManager
         return app(Actions\VerifyTwoFactorAction::class)->execute($payload);
     }
 
+    public function completeTwoFactorLogin(array $payload): array
+    {
+        return app(Actions\CompleteTwoFactorLoginAction::class)->execute($payload);
+    }
+
     public function socialLogin(string $provider, array $payload): array
     {
         return app(Actions\SocialLoginAction::class)->execute($provider, $payload);
     }
 
+    public function forgotPassword(array $payload): string
+    {
+        return app(Actions\RequestPasswordResetAction::class)->execute($payload);
+    }
+
+    public function resetPassword(array $payload): string
+    {
+        return app(Actions\ResetPasswordAction::class)->execute($payload);
+    }
+
+    public function changePassword(array $payload): bool
+    {
+        return app(Actions\ChangePasswordAction::class)->execute($payload);
+    }
+
     public function sessions(): array
     {
         $user = $this->driver()->user();
-        return app(Contracts\SessionRepositoryInterface::class)->forUser($user);
+        return app(SessionRepositoryInterface::class)->forUser($user);
     }
 
     public function devices(): array
     {
         $user = $this->driver()->user();
-        return app(Contracts\DeviceRepositoryInterface::class)->forUser($user);
+        return app(DeviceRepositoryInterface::class)->forUser($user);
+    }
+
+    public function trustDevice(string $fingerprint, bool $trusted = true): bool
+    {
+        $user = $this->driver()->user();
+        if (!$user) {
+            throw new Exceptions\AuthenticationException('User is not authenticated.');
+        }
+
+        return app(DeviceRepositoryInterface::class)->markTrusted($user, $fingerprint, $trusted);
     }
 }

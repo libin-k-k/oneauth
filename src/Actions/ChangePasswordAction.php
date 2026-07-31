@@ -7,13 +7,15 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Libinkk\OneAuth\Events\PasswordChanged;
 use Libinkk\OneAuth\Exceptions\AuthenticationException;
-use Libinkk\OneAuth\Models\PasswordHistory;
+use Libinkk\OneAuth\Support\CredentialRevoker;
 use Libinkk\OneAuth\Support\PasswordPolicy;
 
 class ChangePasswordAction
 {
-    public function __construct(private PasswordPolicy $passwordPolicy)
-    {
+    public function __construct(
+        private PasswordPolicy $passwordPolicy,
+        private CredentialRevoker $credentialRevoker
+    ) {
     }
 
     public function execute(array $payload): bool
@@ -30,16 +32,14 @@ class ChangePasswordAction
 
         $newPassword = (string) ($payload['new_password'] ?? '');
         $this->passwordPolicy->validate($newPassword);
+        $this->passwordPolicy->assertNotReused($user, $newPassword);
 
         $user->forceFill(['password' => Hash::make($newPassword)])->save();
-        PasswordHistory::query()->create([
-            'authenticatable_type' => $user::class,
-            'authenticatable_id' => $user->getKey(),
-            'password_hash' => $user->password,
-            'changed_at' => now(),
-        ]);
+        $this->passwordPolicy->recordHistory($user);
+        $this->credentialRevoker->revokeAll($user);
 
         Event::dispatch(new PasswordChanged($user));
+
         return true;
     }
 }
